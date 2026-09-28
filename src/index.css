@@ -3,6 +3,8 @@
 @theme {
   --color-cream: #f5efe3;
   --font-display: Georgia, serif;
+  --color-forest: #1f3327;
+  --color-terracotta: #c1694f;  
 }
 
 .book-cover {

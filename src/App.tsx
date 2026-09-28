@@ -1,18 +1,25 @@
-import { BookCover } from './components/BookCover';
-const domCasmurro = {
-  id: 'dom-casmurro',
-  title: 'Dom Casmurro',
-  author: 'Machado de Assis',
-  genre: 'Brazilian Literature',
-  color1: '#2F6B4F',
-  color2: '#1F3327',
-  desc: '',
-};
+import { Routes, Route } from 'react-router-dom'
+import { Layout } from './components/Layout'
+import  HomePage  from './pages/HomePage'
+import BookstoresListPage  from './pages/BookstoresListPage'
+import SearchPage from './pages/SearchPage'
+import BookstorePage from './pages/BookstorePage'
+import BookPage  from './pages/BookPage'
+import CommunityPage from './pages/CommunityPage'
+import AdminPage from './pages/AdminPage'
 
 export default function App() {
   return (
-    <div className="p-10 w-44">
-      <BookCover book={domCasmurro} />
-    </div>
-  );
+    <Routes>
+      <Route element={<Layout />}>
+        <Route path="/" element={<HomePage />} />
+        <Route path="/bookstores" element={<BookstoresListPage />} />
+        <Route path="/bookstores/:id" element={<BookstorePage />} />
+        <Route path="/books/:id" element={<BookPage />} />
+        <Route path="/search" element={<SearchPage />} />
+        <Route path="/community" element={<CommunityPage />} />
+        <Route path="/admin" element={<AdminPage />} />
+      </Route>
+    </Routes>
+  )
 }

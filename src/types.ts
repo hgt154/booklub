@@ -7,3 +7,10 @@ export type Book = {
   color2: string;
   desc: string;
 };
+
+export type Bookstore = {
+  id: string;
+  name: string;
+  accent: string;
+  mark: string;
+};
