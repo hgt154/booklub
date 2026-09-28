@@ -1,6 +1,6 @@
 import { Routes, Route } from 'react-router-dom'
 import { Layout } from './components/Layout'
-import  HomePage  from './pages/HomePage'
+import { HomePage } from './pages/HomePage'
 import BookstoresListPage  from './pages/BookstoresListPage'
 import SearchPage from './pages/SearchPage'
 import BookstorePage from './pages/BookstorePage'

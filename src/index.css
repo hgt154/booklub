@@ -4,7 +4,8 @@
   --color-cream: #f5efe3;
   --font-display: Georgia, serif;
   --color-forest: #1f3327;
-  --color-terracotta: #c1694f;  
+  --color-terracotta: #c1694f; 
+  --shadow-soft: 0 4px 24px rgba(31, 51, 39, 0.08); 
 }
 
 .book-cover {
@@ -24,3 +25,10 @@
   width: 2px;
   background: rgba(255, 255, 255, 0.15);
 }
+
+.card-lift { transition: transform 0.25s, box-shadow 0.25s; }
+.card-lift:hover { transform: translateY(-4px); }
+.img-zoom { overflow: hidden; }
+.img-zoom img { transition: transform 0.5s; }
+.img-zoom:hover img { transform: scale(1.05); }
+.badge-community { background: var(--color-terracotta); }
