@@ -247,3 +247,4 @@ export const COLLECTIONS = [
 
 export const getBookstore = (id: string) => BOOKSTORES.find((s) => s.id === id);
 export const getBook = (id: string) => BOOKS.find((b) => b.id === id);
+

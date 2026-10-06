@@ -1,5 +1,6 @@
 export type Bookstore = {
   id: string; name: string; neighborhood: string; district: string; address: string;
+  dbId?: string;  
   accent: string; mark: string; specialties: string[]; languages: string[];
   atmosphere: string; founded: number; owner: string; ownerRole: string;
   ownerPortrait: string; quote: string; story: string; mission: string;

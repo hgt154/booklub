@@ -12,6 +12,7 @@ export function Navbar() {
           <NavLink to="/" end className={linkClass}>Home</NavLink>
           <NavLink to="/bookstores" className={linkClass}>Bookstores</NavLink>
           <NavLink to="/community" className={linkClass}>Community</NavLink>
+          <NavLink to="/search" className={linkClass}>Search</NavLink>
         </div>
       </nav>
     </header>

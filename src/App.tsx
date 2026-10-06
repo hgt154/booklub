@@ -1,14 +1,22 @@
+import { useEffect } from 'react'
 import { Routes, Route } from 'react-router-dom'
+import { supabase } from './lib/supabaseClient'
 import { Layout } from './components/Layout'
-import { HomePage } from './pages/HomePage'
-import BookstoresListPage  from './pages/BookstoresListPage'
+import  HomePage  from './pages/HomePage'
+import { BookstoresListPage } from './pages/BookstoresListPage'
 import SearchPage from './pages/SearchPage'
 import BookstorePage from './pages/BookstorePage'
-import BookPage  from './pages/BookPage'
+import BookPage from './pages/BookPage'
 import CommunityPage from './pages/CommunityPage'
 import AdminPage from './pages/AdminPage'
 
 export default function App() {
+  useEffect(() => {
+    supabase.from('bookstores').select('*').then(({ data, error }) => {
+      console.log('bookstores:', data, error)
+    })
+  }, [])
+
   return (
     <Routes>
       <Route element={<Layout />}>
