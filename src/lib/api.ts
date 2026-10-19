@@ -7,7 +7,7 @@ type BookstoreRow = {
   accent: string; mark: string; specialties: string[]; languages: string[];
   atmosphere: string; founded: number; owner_name: string; owner_role: string;
   owner_portrait: string; quote: string; story: string; mission: string;
-  timeline: { year: string; text: string }[]; hours: string[][];
+  timeline: { year: string; text: string }[]; hours: [string, string][];
   hero_img: string; gallery: string[]; instagram: string; badge: string;
   listings: { count: number }[]; events: { count: number }[];
 };
@@ -36,6 +36,12 @@ function toBookstore(r: BookstoreRow): Bookstore {
 
 const SELECT = '*, listings(count), events(count)';
 
+// Supabase повертає many-to-one join як об'єкт, а не масив (TS-типи кажуть інакше).
+// Ця функція нормалізує обидва варіанти.
+function one<T>(x: T[] | T | null | undefined): T | undefined {
+  return Array.isArray(x) ? x[0] : (x ?? undefined);
+}
+
 export async function fetchBookstores(): Promise<Bookstore[]> {
   const { data, error } = await supabase.from('bookstores').select(SELECT).order('name');
   if (error) throw error;
@@ -56,31 +62,31 @@ export type ListingWithBook = {
   language: string;
   status: string;
   lastConfirmed: string;
-  book: { id: string; title: string; author: string; color1: string; color2: string };
+  book: { id: string; slug: string; title: string; author: string; color1: string; color2: string };
 };
 
 type ListingRow = {
   id: string; price: number; condition: string; language: string; status: string;
   last_confirmed_at: string;
   // Supabase повертає вкладений join як масив, навіть якщо зв'язок один-до-одного
-  book: { id: string; title: string; author: string; color1: string; color2: string }[];
+  book: { id: string; slug: string; title: string; author: string; color1: string; color2: string }[];
 };
 
 export async function fetchListingsByBookstore(bookstoreId: string): Promise<ListingWithBook[]> {
   const { data, error } = await supabase
     .from('listings')
-    .select('id, price, condition, language, status, last_confirmed_at, book:books(id, title, author, color1, color2)')
+    .select('id, price, condition, language, status, last_confirmed_at, book:books(id, slug, title, author, color1, color2)')
     .eq('bookstore_id', bookstoreId)
     .order('last_confirmed_at', { ascending: false });
 
   if (error) throw error;
 
   return (data as ListingRow[])
-    .filter((r) => r.book[0])
+    .filter((r) => one(r.book))
     .map((r) => ({
       id: r.id, price: r.price, condition: r.condition, language: r.language,
       status: r.status, lastConfirmed: r.last_confirmed_at,
-      book: r.book[0],
+      book: one(r.book)!,
     }));
 }
 
@@ -105,10 +111,10 @@ export async function fetchEvents(): Promise<EventWithStore[]> {
     .order('event_date');
   if (error) throw error;
   return (data as EventRow[])
-    .filter((r) => r.bookstore[0])
+    .filter((r) => one(r.bookstore))
     .map((r) => ({
       id: r.id, title: r.title, type: r.type, description: r.description,
-      date: r.event_date, time: r.event_time, bookstore: r.bookstore[0],
+      date: r.event_date, time: r.event_time, bookstore: one(r.bookstore)!,
     }));
 }
 
@@ -128,10 +134,10 @@ export async function fetchClubs(): Promise<ClubWithStore[]> {
     .select('id, name, freq, description, bookstore:bookstores(id, slug, name, accent, mark)');
   if (error) throw error;
   return (data as ClubRow[])
-    .filter((r) => r.bookstore[0])
+    .filter((r) => one(r.bookstore))
     .map((r) => ({
       id: r.id, name: r.name, freq: r.freq, description: r.description,
-      bookstore: r.bookstore[0],
+      bookstore: one(r.bookstore)!,
     }));
 }
 
@@ -151,10 +157,10 @@ export async function fetchStories(): Promise<StoryWithStore[]> {
     .select('id, title, img, excerpt, bookstore:bookstores(id, slug, name)');
   if (error) throw error;
   return (data as StoryRow[])
-    .filter((r) => r.bookstore[0])
+    .filter((r) => one(r.bookstore))
     .map((r) => ({
       id: r.id, title: r.title, img: r.img, excerpt: r.excerpt,
-      bookstore: r.bookstore[0],
+      bookstore: one(r.bookstore)!,
     }));
 }
 
@@ -220,11 +226,11 @@ export async function fetchListingsByBook(bookSlug: string): Promise<BookListing
     .eq('book.slug', bookSlug)
     .order('price');
   if (error) throw error;
-  return (data as BookListingRow[])
-    .filter((r) => r.bookstore[0])
+  return (data as unknown as BookListingRow[])
+    .filter((r) => one(r.bookstore))
     .map((r) => ({
       id: r.id, price: r.price, condition: r.condition, language: r.language,
-      status: r.status, lastConfirmed: r.last_confirmed_at, bookstore: r.bookstore[0],
+      status: r.status, lastConfirmed: r.last_confirmed_at, bookstore: one(r.bookstore)!,
     }));
 }
 
@@ -233,14 +239,14 @@ export async function fetchListingsByBook(bookSlug: string): Promise<BookListing
 export type SearchListing = {
   id: string; price: number; condition: string; language: string; status: string;
   lastConfirmed: string;
-  book: { id: string; title: string; author: string; color1: string; color2: string };
+  book: { id: string; slug: string; title: string; author: string; color1: string; color2: string };
   bookstore: { slug: string; name: string; neighborhood: string; accent: string; mark: string };
 };
 
 type SearchListingRow = {
   id: string; price: number; condition: string; language: string; status: string;
   last_confirmed_at: string;
-  book: { id: string; title: string; author: string; color1: string; color2: string }[];
+  book: { id: string; slug: string; title: string; author: string; color1: string; color2: string }[];
   bookstore: { slug: string; name: string; neighborhood: string; accent: string; mark: string }[];
 };
 
@@ -261,19 +267,19 @@ export async function searchListings(query: string): Promise<SearchListing[]> {
     .from('listings')
     .select(
       'id, price, condition, language, status, last_confirmed_at, ' +
-      'book:books(id, title, author, color1, color2), ' +
+      'book:books(id, slug, title, author, color1, color2), ' +
       'bookstore:bookstores(slug, name, neighborhood, accent, mark)'
     )
     .in('book_id', bookIds)
     .order('price');
   if (error) throw error;
 
-  return (data as SearchListingRow[])
-    .filter((r) => r.book[0] && r.bookstore[0])
+  return (data as unknown as SearchListingRow[])
+    .filter((r) => one(r.book) && one(r.bookstore))
     .map((r) => ({
       id: r.id, price: r.price, condition: r.condition, language: r.language,
       status: r.status, lastConfirmed: r.last_confirmed_at,
-      book: r.book[0], bookstore: r.bookstore[0],
+      book: one(r.book)!, bookstore: one(r.bookstore)!,
     }));
 }
 
@@ -281,12 +287,12 @@ export async function searchListings(query: string): Promise<SearchListing[]> {
 
 type RecentBookRow = {
   book_id: string;
-  book: { id: string; title: string; author: string; color1: string; color2: string }[];
+  book: { id: string; slug: string; title: string; author: string; color1: string; color2: string }[];
   bookstore: { slug: string; name: string }[];
 };
 
 export type RecentBook = {
-  book: { id: string; title: string; author: string; color1: string; color2: string };
+  book: { id: string; slug: string; title: string; author: string; color1: string; color2: string };
   bookstore: { slug: string; name: string };
 };
 
@@ -294,12 +300,184 @@ export async function fetchRecentBooks(limit = 10): Promise<RecentBook[]> {
   const { data, error } = await supabase
     .from('listings')
     .select(
-      'book_id, book:books(id, title, author, color1, color2), bookstore:bookstores(slug, name)'
+      'book_id, book:books(id, slug, title, author, color1, color2), bookstore:bookstores(slug, name)'
     )
     .order('created_at', { ascending: false })
-    .limit(limit);
+    // одна книга може мати кілька листингів: беремо із запасом і лишаємо найновіший
+    .limit(limit * 4);
   if (error) throw error;
+  const seen = new Set<string>();
   return (data as RecentBookRow[])
-    .filter((r) => r.book[0] && r.bookstore[0])
-    .map((r) => ({ book: r.book[0], bookstore: r.bookstore[0] }));
+    .filter((r) => one(r.book) && one(r.bookstore))
+    .filter((r) => !seen.has(r.book_id) && seen.add(r.book_id))
+    .slice(0, limit)
+    .map((r) => ({ book: one(r.book)!, bookstore: one(r.bookstore)! }));
+}
+
+/* ---------- NAVBAR SEARCH SUGGESTIONS ---------- */
+
+export type Suggestions = {
+  authors: string[];
+  books: { slug: string; title: string; author: string }[];
+  bookstores: { slug: string; name: string; neighborhood: string }[];
+  events: { id: string; title: string; date: string }[];
+};
+
+export async function fetchSuggestions(query: string): Promise<Suggestions> {
+  // прибираємо символи, які ламають синтаксис .or() у PostgREST
+  const q = query.replace(/[%,()*]/g, ' ').trim();
+  const empty: Suggestions = { authors: [], books: [], bookstores: [], events: [] };
+  if (!q) return empty;
+
+  const [booksRes, storesRes, eventsRes] = await Promise.all([
+    supabase
+      .from('books')
+      .select('slug, title, author')
+      .or(`title.ilike.%${q}%,author.ilike.%${q}%`)
+      .limit(8),
+    supabase
+      .from('bookstores')
+      .select('slug, name, neighborhood')
+      .or(`name.ilike.%${q}%,neighborhood.ilike.%${q}%`)
+      .limit(3),
+    supabase
+      .from('events')
+      .select('id, title, event_date')
+      .ilike('title', `%${q}%`)
+      .limit(3),
+  ]);
+
+  const books = (booksRes.data ?? []) as { slug: string; title: string; author: string }[];
+  const lower = q.toLowerCase();
+
+  return {
+    authors: [...new Set(books.map((b) => b.author))]
+      .filter((a) => a.toLowerCase().includes(lower))
+      .slice(0, 3),
+    books: books.slice(0, 4),
+    bookstores: (storesRes.data ?? []) as { slug: string; name: string; neighborhood: string }[],
+    events: ((eventsRes.data ?? []) as { id: string; title: string; event_date: string }[]).map(
+      (e) => ({ id: e.id, title: e.title, date: e.event_date })
+    ),
+  };
+}
+/* ---------- RESERVATIONS ---------- */
+
+export type ReservationStatus = 'pending' | 'confirmed' | 'ready' | 'completed' | 'cancelled';
+
+const ACTIVE_STATUSES: ReservationStatus[] = ['pending', 'confirmed', 'ready'];
+
+export async function createReservation(listingId: string, userId: string): Promise<void> {
+  const { error } = await supabase
+    .from('reservations')
+    .insert({ listing_id: listingId, user_id: userId });
+  // 23505 = unique violation: активна резервація цього листингу вже є
+  if (error?.code === '23505') throw new Error('You have already reserved this copy.');
+  if (error) throw error;
+}
+
+export async function fetchMyActiveListingIds(userId: string): Promise<string[]> {
+  const { data, error } = await supabase
+    .from('reservations')
+    .select('listing_id')
+    .eq('user_id', userId)
+    .in('status', ACTIVE_STATUSES);
+  if (error) throw error;
+  return (data as { listing_id: string }[]).map((r) => r.listing_id);
+}
+
+type MyReservationRow = {
+  id: string; status: ReservationStatus; created_at: string;
+  listing: {
+    price: number;
+    book: { slug: string; title: string; author: string }[];
+    bookstore: { slug: string; name: string; neighborhood: string }[];
+  }[];
+};
+
+export type MyReservation = {
+  id: string; status: ReservationStatus; createdAt: string; price: number;
+  book: { slug: string; title: string; author: string };
+  bookstore: { slug: string; name: string; neighborhood: string };
+};
+
+export async function fetchMyReservations(userId: string): Promise<MyReservation[]> {
+  const { data, error } = await supabase
+    .from('reservations')
+    .select(
+      'id, status, created_at, listing:listings(price, book:books(slug, title, author), bookstore:bookstores(slug, name, neighborhood))'
+    )
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return (data as unknown as MyReservationRow[]).flatMap((r) => {
+    const listing = one(r.listing);
+    const book = one(listing?.book);
+    const bookstore = one(listing?.bookstore);
+    if (!listing || !book || !bookstore) return [];
+    return [{
+      id: r.id, status: r.status, createdAt: r.created_at, price: listing.price,
+      book, bookstore,
+    }];
+  });
+}
+
+export async function cancelReservation(id: string): Promise<void> {
+  const { data, error } = await supabase
+    .from('reservations')
+    .update({ status: 'cancelled' })
+    .eq('id', id)
+    .select('id');
+  if (error) throw error;
+  // RLS не повертає помилку, якщо рядок не оновився, тому перевіряємо результат
+  if (!data?.length) throw new Error('This reservation can no longer be cancelled.');
+}
+
+/* ---------- PROFILE ---------- */
+
+export async function updateMyName(userId: string, name: string): Promise<void> {
+  const { data, error } = await supabase
+    .from('profiles')
+    .update({ name: name.trim() || null })
+    .eq('id', userId)
+    .select('id');
+  if (error) throw error;
+  if (!data?.length) throw new Error('Could not save your name.');
+}
+
+/* ---------- OWNER APPLICATION ---------- */
+
+export type BookstoreStatus = 'pending' | 'approved' | 'rejected';
+
+export type BookstoreApplication = {
+  name: string; neighborhood: string; address: string; description: string;
+};
+
+// Повертає slug створеної книгарні (status = 'pending')
+export async function applyForBookstore(app: BookstoreApplication): Promise<string> {
+  const { data, error } = await supabase.rpc('apply_for_bookstore', {
+    p_name: app.name,
+    p_neighborhood: app.neighborhood,
+    p_address: app.address,
+    p_description: app.description,
+  });
+  // 23505 = unique violation: заявка вже на розгляді (подвійне натискання)
+  if (error?.code === '23505') throw new Error('You already have an application under review.');
+  if (error) throw error;
+  return data as string;
+}
+
+export type MyBookstore = {
+  id: string; slug: string; name: string; status: BookstoreStatus; createdAt: string;
+};
+
+export async function fetchMyBookstores(userId: string): Promise<MyBookstore[]> {
+  const { data, error } = await supabase
+    .from('bookstores')
+    .select('id, slug, name, status, created_at')
+    .eq('owner_id', userId)
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return (data as { id: string; slug: string; name: string; status: BookstoreStatus; created_at: string }[])
+    .map((r) => ({ id: r.id, slug: r.slug, name: r.name, status: r.status, createdAt: r.created_at }));
 }

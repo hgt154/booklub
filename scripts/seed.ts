@@ -13,8 +13,9 @@ const supabase = createClient(
   { realtime: { transport: ws as never } }
 );
 
-function check<T>(res: { data: T; error: { message: string } | null }, label: string): T {
+function check<T>(res: { data: T | null; error: { message: string } | null }, label: string): T {
   if (res.error) throw new Error(`${label}: ${res.error.message}`);
+  if (res.data === null) throw new Error(`${label}: no data returned`);
   console.log(`✓ ${label}`);
   return res.data;
 }

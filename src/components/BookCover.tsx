@@ -1,7 +1,7 @@
 import type { Book } from '../types';
 
 type Props = {
-  book: Book;
+  book: Pick<Book, 'title' | 'author' | 'color1' | 'color2'>;
   size?: 'normal' | 'large';
 };
 

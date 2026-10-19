@@ -135,8 +135,8 @@ export default function BookstorePage() {
               </p>
               <div className="grid grid-cols-3 sm:grid-cols-5 gap-4">
                 {listings?.slice(0, 10).map((l) => (
-                  <Link key={l.id} to={`/books/${l.book.id}`} className="group">
-                    <BookCover book={{ ...l.book, genre: '', desc: '' }} />
+                  <Link key={l.id} to={`/books/${l.book.slug}`} className="group">
+                    <BookCover book={l.book} />
                     <p className="text-xs font-medium text-forest mt-2 leading-snug group-hover:text-terracotta transition-colors">
                       {l.book.title}
                     </p>

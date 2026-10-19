@@ -1,4 +1,3 @@
-import type { Bookstore, Book, Listing, BookEvent, Club, Story, Walk, Collection } from '../types';
 export const BOOKSTORES = [
   {
     id:'leguara', name:'Leguará', neighborhood:'Neubau', district:'1070',
