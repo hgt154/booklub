@@ -57,7 +57,7 @@ legacy/                 old prototype, reference only, never modify
 
 - Tables: `profiles`, `bookstores`, `books`, `listings`, `events`, `clubs`, `stories`, `walks`, `reservations`, `messages`, `follows`.
 - Roles (`user_role` enum): `reader`, `bookstore_owner`, `super_admin`. A user cannot change their own role (column-level grants). Roles are set by the super admin in the Supabase Table Editor.
-- `bookstores.status` is `pending` or `approved`. The public sees only approved stores; owners also see their own. Moderation is done by the super admin.
+- `bookstores.status` is `pending`, `approved` or `rejected`. The public sees only approved stores; owners also see their own; super admins see all (public lists must filter `status = 'approved'`). Moderation is done by the super admin on `/moderation`; only super admins can change `status` (guard trigger).
 - `reservations.status`: `pending`, `confirmed`, `ready`, `completed`, `cancelled`. Readers create and see their own reservations and can only cancel; owners update the status of reservations on their listings.
 - RLS is on for every table. Any new table needs RLS policies in the same SQL.
 - Do NOT change the database yourself. Write SQL to `supabase/*.sql`, append it to `schema.sql` as documentation, and I will run it in the Supabase SQL Editor.
@@ -97,13 +97,14 @@ Done:
 - Header with live search suggestions; footer; layout matching the prototype.
 - Auth: sign up, log in, log out, session handling (`/auth`).
 - Reservations: Reserve button on the book page, `/profile` with reservations and cancel, editable name.
+- Bookstore application (`/apply`, `apply_for_bookstore` RPC); approval in Table Editor promotes the owner via trigger.
+- Owner dashboard (`/admin`): Books tab (add, edit price/status, delete), Reservations tab (confirm, ready, complete), Recent searches (anonymous `search_logs`), Recently added, Messages.
+- Super admin moderation (`/moderation`): approve / reject pending applications; burger menu in the Navbar below `lg`.
+- Bookstore page: Contact (messages) and Follow (follows); Followers and Reserved counters via `bookstore_public_stats()`.
 
 Next, in this order:
-1. Bookstore application form ("List your bookstore") that creates a `pending` bookstore for review.
-2. Owner dashboard (`/admin`): Books (add, edit price, mark sold), Reservations (confirm, ready, complete), Recent searches, Recently added, Messages.
-3. Contact bookstore (`messages`) and Follow (`follows`), with real follower counts.
-4. Email templates and custom SMTP in Supabase Auth; transactional emails for reservation status changes (Edge Function).
-5. Remaining pages aligned with the prototype (bookstores list filters, community sections, breadcrumbs).
-6. Vercel deploy, loading/empty/error states, mobile pass, keep the Supabase project from pausing (Pro plan or a weekly ping).
+1. Email templates and custom SMTP in Supabase Auth; transactional emails for reservation status changes (Edge Function).
+2. Remaining pages aligned with the prototype (bookstores list filters, community sections, breadcrumbs).
+3. Vercel deploy, loading/empty/error states, mobile pass, keep the Supabase project from pausing (Pro plan or a weekly ping).
 
 Update this section when a stage is finished.

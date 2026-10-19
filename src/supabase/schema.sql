@@ -385,3 +385,187 @@ end $$;
 create trigger on_bookstore_approved
   after update of status on public.bookstores
   for each row execute function public.promote_owner_on_approval();
+
+-- ==========================================================
+-- Estante: owner dashboard
+-- Run once in Supabase -> SQL Editor after schema.sql
+-- ==========================================================
+
+-- Owners can read the profile (name) of readers who reserved one of their listings.
+-- Without this, the Reservations tab shows "Reader" instead of the name.
+-- No recursion: reservations policies use owns_listing() (security definer)
+-- and never read profiles.
+create policy "owners read their customers" on public.profiles
+  for select to authenticated
+  using (
+    exists (
+      select 1 from public.reservations r
+      where r.user_id = profiles.id
+        and public.owns_listing(r.listing_id)
+    )
+  );
+
+-- ==========================================================
+-- Estante: follows, messages, public counters
+-- Run once in Supabase -> SQL Editor after schema.sql
+-- RLS hides other users' follows and reservations, so counts and
+-- the owner's inbox go through security definer functions that
+-- return only aggregates / the reader's name.
+-- ==========================================================
+
+-- Public counters for a bookstore page: followers and active reservations.
+-- Only for approved stores (or the owner's own store), like the bookstores RLS.
+create function public.bookstore_public_stats(p_bookstore uuid)
+returns table (followers bigint, reserved bigint)
+language sql stable security definer set search_path = public as $$
+  select
+    (select count(*) from public.follows f where f.bookstore_id = s.id),
+    (select count(*)
+       from public.reservations r
+       join public.listings l on l.id = r.listing_id
+      where l.bookstore_id = s.id
+        and r.status in ('pending', 'confirmed', 'ready'))
+  from public.bookstores s
+  where s.id = p_bookstore
+    and (s.status = 'approved' or s.owner_id = auth.uid())
+$$;
+
+revoke execute on function public.bookstore_public_stats(uuid) from public;
+grant execute on function public.bookstore_public_stats(uuid) to anon, authenticated;
+
+-- Owner inbox: messages to my bookstore with the sender's name only
+-- (no email, no role). Returns nothing if the caller does not own the store.
+create function public.bookstore_messages(p_bookstore uuid)
+returns table (id uuid, content text, created_at timestamptz, reader_name text)
+language sql stable security definer set search_path = public as $$
+  select m.id, m.content, m.created_at, p.name
+  from public.messages m
+  left join public.profiles p on p.id = m.user_id
+  where m.bookstore_id = p_bookstore
+    and public.owns_bookstore(p_bookstore)
+  order by m.created_at desc
+$$;
+
+revoke execute on function public.bookstore_messages(uuid) from public, anon;
+grant execute on function public.bookstore_messages(uuid) to authenticated;
+
+-- ==========================================================
+-- Estante: anonymous search log + "Recent searches" for owners
+-- Run once in Supabase -> SQL Editor after schema.sql
+-- search_logs stores only the query text and a timestamp:
+-- no user id, no IP, no other personal data.
+-- ==========================================================
+
+create table public.search_logs (
+  id uuid primary key default gen_random_uuid(),
+  query text not null check (char_length(query) between 2 and 100),
+  created_at timestamptz not null default now()
+);
+
+create index on public.search_logs (created_at);
+
+-- Anyone (also anonymous visitors) can insert; nobody can read rows directly.
+-- There is deliberately no select/update/delete policy.
+alter table public.search_logs enable row level security;
+create policy "anyone logs searches" on public.search_logs
+  for insert to anon, authenticated
+  with check (char_length(query) between 2 and 100);
+revoke all on public.search_logs from anon, authenticated;
+grant insert (query) on public.search_logs to anon, authenticated;
+
+-- Most frequent searches of the last 30 days that match the title or author
+-- of at least one book listed by the given bookstore. Owner only.
+-- Queries are grouped case-insensitively; % and _ in queries are matched literally.
+create function public.bookstore_recent_searches(p_bookstore uuid)
+returns table (query text, times bigint, matching_books text[])
+language sql stable security definer set search_path = public as $$
+  with recent as (
+    select lower(btrim(s.query)) as q, count(*) as times
+    from public.search_logs s
+    where s.created_at > now() - interval '30 days'
+    group by lower(btrim(s.query))
+  ),
+  store_books as (
+    select distinct b.title, b.author
+    from public.listings l
+    join public.books b on b.id = l.book_id
+    where l.bookstore_id = p_bookstore
+  ),
+  pattern as (
+    select q, times,
+      '%' || replace(replace(replace(q, '\', '\\'), '%', '\%'), '_', '\_') || '%' as p
+    from recent
+  )
+  select pt.q, pt.times, array_agg(distinct sb.title order by sb.title)
+  from pattern pt
+  join store_books sb on sb.title ilike pt.p or sb.author ilike pt.p
+  where public.owns_bookstore(p_bookstore)
+  group by pt.q, pt.times
+  order by pt.times desc, pt.q
+  limit 20
+$$;
+
+revoke execute on function public.bookstore_recent_searches(uuid) from public, anon;
+grant execute on function public.bookstore_recent_searches(uuid) to authenticated;
+
+-- ==========================================================
+-- Estante: super admin moderation (/moderation)
+-- Run once in Supabase -> SQL Editor after schema.sql,
+-- owner-application.sql and the other part files.
+-- Flow: pending -> approved (trigger on_bookstore_approved promotes the
+--       owner to bookstore_owner) or pending -> rejected.
+-- ==========================================================
+
+-- Super admins see every bookstore, including pending and rejected ones.
+-- (Permissive policies are OR'ed with "read approved or own".)
+create policy "super admin reads all bookstores" on public.bookstores
+  for select to authenticated
+  using (public.my_role() = 'super_admin');
+
+-- Super admins may update any bookstore row ...
+create policy "super admin updates bookstores" on public.bookstores
+  for update to authenticated
+  using (public.my_role() = 'super_admin')
+  with check (public.my_role() = 'super_admin');
+
+-- ... and the status column becomes updatable through the API.
+grant update (status) on public.bookstores to authenticated;
+
+-- Guard: the grant above also reaches owners through "owners edit own",
+-- so only super admins may change status. auth.uid() is null in the
+-- Supabase dashboard / service role, which stays allowed.
+create function public.guard_bookstore_status() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if new.status is distinct from old.status
+     and auth.uid() is not null
+     and public.my_role() is distinct from 'super_admin' then
+    raise exception 'Only a super admin can change the bookstore status.';
+  end if;
+  return new;
+end $$;
+
+create trigger guard_bookstore_status
+  before update of status on public.bookstores
+  for each row execute function public.guard_bookstore_status();
+
+-- on_bookstore_approved (owner-application.sql) is an AFTER UPDATE OF status
+-- trigger with security definer, so it keeps promoting the owner when the
+-- status is changed from the app instead of the Table Editor.
+
+-- Applicant's name and email for a pending bookstore. Super admin only;
+-- returns no row for anyone else or for non-pending stores.
+create function public.bookstore_applicant(p_bookstore uuid)
+returns table (name text, email text)
+language sql stable security definer set search_path = public as $$
+  select p.name, u.email::text
+  from public.bookstores s
+  join public.profiles p on p.id = s.owner_id
+  join auth.users u on u.id = s.owner_id
+  where s.id = p_bookstore
+    and s.status = 'pending'
+    and public.my_role() = 'super_admin'
+$$;
+
+revoke execute on function public.bookstore_applicant(uuid) from public, anon;
+grant execute on function public.bookstore_applicant(uuid) to authenticated;

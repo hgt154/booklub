@@ -43,7 +43,9 @@ function one<T>(x: T[] | T | null | undefined): T | undefined {
 }
 
 export async function fetchBookstores(): Promise<Bookstore[]> {
-  const { data, error } = await supabase.from('bookstores').select(SELECT).order('name');
+  // RLS показує власнику його pending-книгарню, а супер-адміну всі: публічний список лише approved
+  const { data, error } = await supabase
+    .from('bookstores').select(SELECT).eq('status', 'approved').order('name');
   if (error) throw error;
   return (data as BookstoreRow[]).map(toBookstore);
 }
@@ -60,13 +62,13 @@ export type ListingWithBook = {
   price: number;
   condition: string;
   language: string;
-  status: string;
+  status: ListingStatus;
   lastConfirmed: string;
   book: { id: string; slug: string; title: string; author: string; color1: string; color2: string };
 };
 
 type ListingRow = {
-  id: string; price: number; condition: string; language: string; status: string;
+  id: string; price: number; condition: string; language: string; status: ListingStatus;
   last_confirmed_at: string;
   // Supabase повертає вкладений join як масив, навіть якщо зв'язок один-до-одного
   book: { id: string; slug: string; title: string; author: string; color1: string; color2: string }[];
@@ -219,14 +221,12 @@ export async function fetchListingsByBook(bookSlug: string): Promise<BookListing
   const { data, error } = await supabase
     .from('listings')
     .select(
-      'id, price, condition, language, status, last_confirmed_at, ' +
-      'book:books!inner(slug), ' +
-      'bookstore:bookstores(slug, name, neighborhood, accent, mark)'
+      'id, price, condition, language, status, last_confirmed_at, book:books!inner(slug), bookstore:bookstores(slug, name, neighborhood, accent, mark)'
     )
     .eq('book.slug', bookSlug)
     .order('price');
   if (error) throw error;
-  return (data as unknown as BookListingRow[])
+  return (data as BookListingRow[])
     .filter((r) => one(r.bookstore))
     .map((r) => ({
       id: r.id, price: r.price, condition: r.condition, language: r.language,
@@ -266,15 +266,13 @@ export async function searchListings(query: string): Promise<SearchListing[]> {
   const { data, error } = await supabase
     .from('listings')
     .select(
-      'id, price, condition, language, status, last_confirmed_at, ' +
-      'book:books(id, slug, title, author, color1, color2), ' +
-      'bookstore:bookstores(slug, name, neighborhood, accent, mark)'
+      'id, price, condition, language, status, last_confirmed_at, book:books(id, slug, title, author, color1, color2), bookstore:bookstores(slug, name, neighborhood, accent, mark)'
     )
     .in('book_id', bookIds)
     .order('price');
   if (error) throw error;
 
-  return (data as unknown as SearchListingRow[])
+  return (data as SearchListingRow[])
     .filter((r) => one(r.book) && one(r.bookstore))
     .map((r) => ({
       id: r.id, price: r.price, condition: r.condition, language: r.language,
@@ -338,6 +336,7 @@ export async function fetchSuggestions(query: string): Promise<Suggestions> {
     supabase
       .from('bookstores')
       .select('slug, name, neighborhood')
+      .eq('status', 'approved')
       .or(`name.ilike.%${q}%,neighborhood.ilike.%${q}%`)
       .limit(3),
     supabase
@@ -410,7 +409,7 @@ export async function fetchMyReservations(userId: string): Promise<MyReservation
     .eq('user_id', userId)
     .order('created_at', { ascending: false });
   if (error) throw error;
-  return (data as unknown as MyReservationRow[]).flatMap((r) => {
+  return (data as MyReservationRow[]).flatMap((r) => {
     const listing = one(r.listing);
     const book = one(listing?.book);
     const bookstore = one(listing?.bookstore);
@@ -480,4 +479,320 @@ export async function fetchMyBookstores(userId: string): Promise<MyBookstore[]> 
   if (error) throw error;
   return (data as { id: string; slug: string; name: string; status: BookstoreStatus; created_at: string }[])
     .map((r) => ({ id: r.id, slug: r.slug, name: r.name, status: r.status, createdAt: r.created_at }));
+}
+
+/* ---------- OWNER DASHBOARD: BOOKS ---------- */
+
+export type ListingStatus = 'available' | 'reserved' | 'sold';
+
+export type NewListing = {
+  title: string; author: string; genre: string;
+  price: number; language: string; condition: string;
+};
+
+// Те саме правило, що й у SQL apply_for_bookstore: "Grande Sertão" -> "grande-sertao"
+export function slugify(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/ß/g, 'ss')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+async function findBookBySlug(slug: string): Promise<{ id: string; author: string } | null> {
+  const { data, error } = await supabase
+    .from('books')
+    .select('id, author')
+    .eq('slug', slug)
+    .maybeSingle();
+  if (error) throw error;
+  return data as { id: string; author: string } | null;
+}
+
+// Знаходить книгу за slug або створює її. Slug береться з назви (як у сід-даних);
+// якщо під ним уже інша книга іншого автора, використовуємо "назва-автор".
+async function findOrCreateBook(b: Pick<NewListing, 'title' | 'author' | 'genre'>): Promise<string> {
+  const sameAuthor = (author: string) => author.trim().toLowerCase() === b.author.trim().toLowerCase();
+
+  let slug = slugify(b.title) || 'book';
+  let existing = await findBookBySlug(slug);
+  if (existing && !sameAuthor(existing.author)) {
+    slug = slugify(`${b.title} ${b.author}`);
+    existing = await findBookBySlug(slug);
+  }
+  if (existing) return existing.id;
+
+  const { data, error } = await supabase
+    .from('books')
+    .insert({
+      slug, title: b.title.trim(), author: b.author.trim(),
+      genre: b.genre.trim() || null, source: 'manual',
+    })
+    .select('id')
+    .single();
+  if (error?.code === '23505') {
+    // хтось щойно створив цю книгу: беремо її
+    const created = await findBookBySlug(slug);
+    if (created) return created.id;
+  }
+  if (error) throw error;
+  return (data as { id: string }).id;
+}
+
+export async function addListing(bookstoreId: string, l: NewListing): Promise<void> {
+  const bookId = await findOrCreateBook(l);
+  const { error } = await supabase.from('listings').insert({
+    book_id: bookId, bookstore_id: bookstoreId, price: l.price,
+    language: l.language.trim() || null, condition: l.condition || null,
+  });
+  if (error) throw error;
+}
+
+export async function updateListing(
+  id: string,
+  changes: { price: number; status: ListingStatus }
+): Promise<void> {
+  const { data, error } = await supabase
+    .from('listings')
+    // власник перевірив примірник, тож оновлюємо "last confirmed"
+    .update({ ...changes, last_confirmed_at: new Date().toISOString() })
+    .eq('id', id)
+    .select('id');
+  if (error) throw error;
+  if (!data?.length) throw new Error('Could not update this listing.');
+}
+
+export async function deleteListing(id: string): Promise<void> {
+  const { data, error } = await supabase.from('listings').delete().eq('id', id).select('id');
+  if (error) throw error;
+  if (!data?.length) throw new Error('Could not delete this listing.');
+}
+
+/* ---------- OWNER DASHBOARD: RESERVATIONS ---------- */
+
+type StoreReservationRow = {
+  id: string; status: ReservationStatus; created_at: string;
+  reader: { name: string | null }[] | null;
+  listing: {
+    price: number;
+    book: { slug: string; title: string; author: string }[];
+  }[];
+};
+
+export type StoreReservation = {
+  id: string; status: ReservationStatus; createdAt: string; price: number;
+  // null, якщо RLS не дозволяє власнику читати профіль (див. owner-dashboard.sql)
+  readerName: string | null;
+  book: { slug: string; title: string; author: string };
+};
+
+export async function fetchBookstoreReservations(bookstoreId: string): Promise<StoreReservation[]> {
+  const { data, error } = await supabase
+    .from('reservations')
+    .select('id, status, created_at, reader:profiles(name), listing:listings!inner(price, bookstore_id, book:books(slug, title, author))')
+    .eq('listing.bookstore_id', bookstoreId)
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return (data as StoreReservationRow[]).flatMap((r) => {
+    const listing = one(r.listing);
+    const book = one(listing?.book);
+    if (!listing || !book) return [];
+    return [{
+      id: r.id, status: r.status, createdAt: r.created_at, price: listing.price,
+      readerName: one(r.reader)?.name ?? null, book,
+    }];
+  });
+}
+
+export async function updateReservationStatus(id: string, status: ReservationStatus): Promise<void> {
+  const { data, error } = await supabase
+    .from('reservations')
+    .update({ status })
+    .eq('id', id)
+    .select('id');
+  if (error) throw error;
+  if (!data?.length) throw new Error('Could not update this reservation.');
+}
+
+/* ---------- FOLLOWS, MESSAGES, PUBLIC COUNTERS ---------- */
+
+export type BookstoreCounts = { followers: number; reserved: number };
+
+// RLS ховає чужі follows і резервації, тому лічильники рахує security definer функція
+export async function fetchBookstoreCounts(bookstoreId: string): Promise<BookstoreCounts> {
+  const { data, error } = await supabase.rpc('bookstore_public_stats', { p_bookstore: bookstoreId });
+  if (error) throw error;
+  // bigint приходить числом або рядком, залежно від розміру
+  const row = (data as { followers: number | string; reserved: number | string }[])[0];
+  return { followers: Number(row?.followers ?? 0), reserved: Number(row?.reserved ?? 0) };
+}
+
+export async function fetchIsFollowing(userId: string, bookstoreId: string): Promise<boolean> {
+  const { data, error } = await supabase
+    .from('follows')
+    .select('bookstore_id')
+    .eq('user_id', userId)
+    .eq('bookstore_id', bookstoreId)
+    .maybeSingle();
+  if (error) throw error;
+  return data !== null;
+}
+
+export async function followBookstore(userId: string, bookstoreId: string): Promise<void> {
+  const { error } = await supabase
+    .from('follows')
+    .insert({ user_id: userId, bookstore_id: bookstoreId });
+  // 23505: вже підписані (наприклад, з іншої вкладки) — це не помилка
+  if (error && error.code !== '23505') throw error;
+}
+
+export async function unfollowBookstore(userId: string, bookstoreId: string): Promise<void> {
+  const { error } = await supabase
+    .from('follows')
+    .delete()
+    .eq('user_id', userId)
+    .eq('bookstore_id', bookstoreId);
+  if (error) throw error;
+}
+
+export async function sendMessage(bookstoreId: string, userId: string, content: string): Promise<void> {
+  const { error } = await supabase
+    .from('messages')
+    .insert({ bookstore_id: bookstoreId, user_id: userId, content: content.trim() });
+  if (error) throw error;
+}
+
+export type StoreMessage = {
+  id: string; content: string; createdAt: string;
+  readerName: string | null;
+};
+
+export async function fetchBookstoreMessages(bookstoreId: string): Promise<StoreMessage[]> {
+  const { data, error } = await supabase.rpc('bookstore_messages', { p_bookstore: bookstoreId });
+  if (error) throw error;
+  return (data as { id: string; content: string; created_at: string; reader_name: string | null }[])
+    .map((r) => ({ id: r.id, content: r.content, createdAt: r.created_at, readerName: r.reader_name }));
+}
+
+/* ---------- OWNER DASHBOARD: RECENTLY ADDED ---------- */
+
+type RecentListingRow = {
+  id: string; price: number; created_at: string;
+  book: { id: string; slug: string; title: string; author: string; color1: string; color2: string }[];
+};
+
+export type RecentListing = {
+  id: string; price: number; createdAt: string;
+  book: { id: string; slug: string; title: string; author: string; color1: string; color2: string };
+};
+
+export async function fetchRecentListings(bookstoreId: string, limit = 20): Promise<RecentListing[]> {
+  const { data, error } = await supabase
+    .from('listings')
+    .select('id, price, created_at, book:books(id, slug, title, author, color1, color2)')
+    .eq('bookstore_id', bookstoreId)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return (data as RecentListingRow[])
+    .filter((r) => one(r.book))
+    .map((r) => ({ id: r.id, price: r.price, createdAt: r.created_at, book: one(r.book)! }));
+}
+
+/* ---------- SEARCH LOG ---------- */
+
+// Захист від подвійного запису: Enter у Navbar веде на /search, який теж логує,
+// а StrictMode у dev двічі запускає ефекти. Той самий запит логуємо раз на хвилину.
+const recentlyLogged = new Map<string, number>();
+const LOG_DEDUPE_MS = 60_000;
+
+// Fire and forget: нічого не повертає й ніколи не кидає помилку
+export function logSearch(query: string): void {
+  const q = query.trim().replace(/\s+/g, ' ').slice(0, 100);
+  if (q.length < 2) return;
+  const key = q.toLowerCase();
+  const now = Date.now();
+  const last = recentlyLogged.get(key);
+  if (last !== undefined && now - last < LOG_DEDUPE_MS) return;
+  recentlyLogged.set(key, now);
+
+  // лише текст запиту: без user id та інших персональних даних
+  supabase
+    .from('search_logs')
+    .insert({ query: q })
+    .then(
+      () => {},
+      () => {}
+    );
+}
+
+/* ---------- OWNER DASHBOARD: RECENT SEARCHES ---------- */
+
+export type RecentSearch = { query: string; times: number; matchingBooks: string[] };
+
+export async function fetchRecentSearches(bookstoreId: string): Promise<RecentSearch[]> {
+  const { data, error } = await supabase.rpc('bookstore_recent_searches', { p_bookstore: bookstoreId });
+  if (error) throw error;
+  return (data as { query: string; times: number | string; matching_books: string[] | null }[])
+    .map((r) => ({ query: r.query, times: Number(r.times), matchingBooks: r.matching_books ?? [] }));
+}
+
+/* ---------- SUPER ADMIN: MODERATION ---------- */
+
+export type ModerationBookstore = {
+  id: string; slug: string; name: string; status: BookstoreStatus; createdAt: string;
+  neighborhood: string | null; address: string | null; story: string | null;
+};
+
+type ModerationRow = {
+  id: string; slug: string; name: string; status: BookstoreStatus; created_at: string;
+  neighborhood: string | null; address: string | null; story: string | null;
+};
+
+// Pending (найстаріші першими, як черга) і нещодавно схвалені (нові першими)
+export async function fetchModerationQueue(
+  approvedLimit = 10
+): Promise<{ pending: ModerationBookstore[]; approved: ModerationBookstore[] }> {
+  const columns = 'id, slug, name, status, created_at, neighborhood, address, story';
+  const [pendingRes, approvedRes] = await Promise.all([
+    supabase.from('bookstores').select(columns).eq('status', 'pending')
+      .order('created_at', { ascending: true }),
+    supabase.from('bookstores').select(columns).eq('status', 'approved')
+      .order('created_at', { ascending: false }).limit(approvedLimit),
+  ]);
+  if (pendingRes.error) throw pendingRes.error;
+  if (approvedRes.error) throw approvedRes.error;
+  const map = (r: ModerationRow): ModerationBookstore => ({
+    id: r.id, slug: r.slug, name: r.name, status: r.status, createdAt: r.created_at,
+    neighborhood: r.neighborhood, address: r.address, story: r.story,
+  });
+  return {
+    pending: (pendingRes.data as ModerationRow[]).map(map),
+    approved: (approvedRes.data as ModerationRow[]).map(map),
+  };
+}
+
+export type Applicant = { name: string | null; email: string | null };
+
+// Лише для pending-книгарень і лише для super_admin (інакше null)
+export async function fetchApplicant(bookstoreId: string): Promise<Applicant | null> {
+  const { data, error } = await supabase.rpc('bookstore_applicant', { p_bookstore: bookstoreId });
+  if (error) throw error;
+  const row = (data as { name: string | null; email: string | null }[])[0];
+  return row ? { name: row.name, email: row.email } : null;
+}
+
+export async function setBookstoreStatus(
+  id: string,
+  status: Extract<BookstoreStatus, 'approved' | 'rejected'>
+): Promise<void> {
+  const { data, error } = await supabase
+    .from('bookstores')
+    .update({ status })
+    .eq('id', id)
+    .select('id');
+  if (error) throw error;
+  if (!data?.length) throw new Error('Could not update this bookstore.');
 }

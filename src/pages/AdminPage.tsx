@@ -1,4 +1,9 @@
-import { Link, Navigate } from 'react-router-dom';
+import { Link, Navigate, useSearchParams } from 'react-router-dom';
+import { BooksTab } from '../components/admin/BooksTab';
+import { ReservationsTab } from '../components/admin/ReservationsTab';
+import { MessagesTab } from '../components/admin/MessagesTab';
+import { RecentSearchesTab } from '../components/admin/RecentSearchesTab';
+import { RecentlyAddedTab } from '../components/admin/RecentlyAddedTab';
 import { fetchMyBookstores, type BookstoreStatus, type MyBookstore } from '../lib/api';
 import { useAsync } from '../lib/useAsync';
 import { useAuth } from '../lib/useAuth';
@@ -94,28 +99,59 @@ function ApplyLink({ label }: { label: string }) {
   );
 }
 
-function OwnerDashboard({ store }: { store: MyBookstore }) {
-  return (
-    <div className="max-w-7xl mx-auto px-6 py-10">
-      <p className="text-terracotta text-xs font-semibold tracking-widest uppercase mb-2">
-        Bookstore dashboard
-      </p>
-      <div className="flex flex-wrap items-center gap-4 mb-8">
-        <h1 className="font-display text-4xl text-forest">{store.name}</h1>
-        <span className="text-xs font-medium px-3 py-1 rounded-full bg-forest/10 text-forest">
-          {STATUS_LABEL[store.status]}
-        </span>
-        <Link
-          to={`/bookstores/${store.slug}`}
-          className="text-sm text-forest/60 hover:text-terracotta underline"
-        >
-          View public page
-        </Link>
-      </div>
+const TABS = [
+  { key: 'books', label: '📖 Books' },
+  { key: 'reservations', label: '🗂️ Reservations' },
+  { key: 'searches', label: '🔍 Recent searches' },
+  { key: 'added', label: '🆕 Recently added' },
+  { key: 'messages', label: '✉️ Messages' },
+] as const;
 
-      {/* TODO: вкладки дашборду (листинги, резервації, події, профіль книгарні) */}
-      <div className="bg-white rounded-2xl shadow-soft p-8 text-sm text-forest/60">
-        Dashboard tabs are coming soon.
+type TabKey = (typeof TABS)[number]['key'];
+
+function OwnerDashboard({ store }: { store: MyBookstore }) {
+  // вкладка в URL (?tab=reservations), щоб переживала перезавантаження
+  const [params, setParams] = useSearchParams();
+  const tab: TabKey = TABS.find((t) => t.key === params.get('tab'))?.key ?? 'books';
+
+  return (
+    <div className="max-w-7xl mx-auto px-6 py-10 grid md:grid-cols-[220px_1fr] gap-10">
+      <aside className="space-y-1">
+        <p className="text-xs uppercase tracking-[0.2em] text-ink/40 font-semibold mb-4 px-3">
+          {store.name} — Admin
+        </p>
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            onClick={() => setParams({ tab: t.key }, { replace: true })}
+            aria-current={tab === t.key ? 'page' : undefined}
+            className={`w-full text-left px-3 py-2.5 rounded-lg text-sm font-medium hover:bg-white transition-colors ${
+              tab === t.key ? 'bg-white shadow-soft text-forest' : 'text-ink/70'
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+        <div className="pt-6 mt-6 border-t border-ink/10 px-3 space-y-2">
+          <p className="text-xs text-ink/50">
+            Status:{' '}
+            <span className="text-forest font-medium">{STATUS_LABEL[store.status]}</span>
+          </p>
+          <Link to={`/bookstores/${store.slug}`} className="block text-xs text-ink/50 hover:text-forest">
+            View public page →
+          </Link>
+          <Link to="/" className="block text-xs text-ink/50 hover:text-forest">
+            ← Back to Estante
+          </Link>
+        </div>
+      </aside>
+
+      <div className="min-w-0">
+        {tab === 'books' && <BooksTab bookstoreId={store.id} />}
+        {tab === 'reservations' && <ReservationsTab bookstoreId={store.id} />}
+        {tab === 'searches' && <RecentSearchesTab bookstoreId={store.id} />}
+        {tab === 'added' && <RecentlyAddedTab bookstoreId={store.id} />}
+        {tab === 'messages' && <MessagesTab bookstoreId={store.id} />}
       </div>
     </div>
   );

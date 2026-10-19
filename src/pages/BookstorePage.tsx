@@ -1,6 +1,16 @@
-import { useParams, Link } from 'react-router-dom';
-import { fetchBookstore, fetchListingsByBookstore } from '../lib/api';
+import { useState } from 'react';
+import { useParams, Link, useLocation } from 'react-router-dom';
+import {
+  fetchBookstore,
+  fetchBookstoreCounts,
+  fetchIsFollowing,
+  fetchListingsByBookstore,
+  followBookstore,
+  sendMessage,
+  unfollowBookstore,
+} from '../lib/api';
 import { useAsync } from '../lib/useAsync';
+import { useAuth } from '../lib/useAuth';
 import { StoreMark } from '../components/StoreMark';
 import { TagList } from '../components/TagList';
 import { BookCover } from '../components/BookCover';
@@ -13,6 +23,14 @@ export default function BookstorePage() {
     () => (store?.dbId ? fetchListingsByBookstore(store.dbId) : Promise.resolve([])),
     [store?.dbId]
   );
+
+  // після Follow/Unfollow перечитуємо лічильники
+  const [countsKey, setCountsKey] = useState(0);
+  const { data: counts } = useAsync(
+    () => (store?.dbId ? fetchBookstoreCounts(store.dbId) : Promise.resolve(null)),
+    [store?.dbId, countsKey]
+  );
+  const { user } = useAuth();
 
   if (loading) {
     return <p className="max-w-7xl mx-auto px-6 py-10 text-forest/60">Loading…</p>;
@@ -54,9 +72,9 @@ export default function BookstorePage() {
         {/* STATS */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4 -mt-8 relative z-20 mb-14">
           <StatTile value={store.stats.books} label="Books" />
-          <StatTile value={store.stats.followers} label="Followers" />
+          <StatTile value={counts?.followers ?? store.stats.followers} label="Followers" />
           <StatTile value={store.stats.eventsHosted} label="Events hosted" />
-          <StatTile value={store.stats.reserved} label="Reserved" />
+          <StatTile value={counts?.reserved ?? store.stats.reserved} label="Reserved" />
           <StatTile value={store.stats.recentlyAdded} label="Recently added" />
         </div>
 
@@ -153,6 +171,15 @@ export default function BookstorePage() {
 
           {/* SIDEBAR */}
           <aside className="space-y-5">
+            {store.dbId && (
+              <StoreActions
+                key={`${store.dbId}-${user?.id ?? 'guest'}`}
+                bookstoreId={store.dbId}
+                storeName={store.name}
+                ownerName={store.owner}
+                onFollowChange={() => setCountsKey((k) => k + 1)}
+              />
+            )}
             <div className="bg-white rounded-2xl p-5 shadow-sm">
               <p className="text-xs font-semibold tracking-widest uppercase text-forest/40 mb-3">
                 Opening hours
@@ -179,6 +206,154 @@ export default function BookstorePage() {
           </aside>
         </div>
       </div>
+    </div>
+  );
+}
+
+function StoreActions({
+  bookstoreId, storeName, ownerName, onFollowChange,
+}: { bookstoreId: string; storeName: string; ownerName: string; onFollowChange: () => void }) {
+  const { user } = useAuth();
+  const location = useLocation();
+  const loginHref = `/auth?next=${encodeURIComponent(location.pathname + location.search)}`;
+
+  const { data: followingFromDb } = useAsync(
+    () => (user ? fetchIsFollowing(user.id, bookstoreId) : Promise.resolve(false)),
+    [user?.id, bookstoreId]
+  );
+  // локальне значення після кліку, щоб кнопка не блимала під час перезапиту
+  const [followingLocal, setFollowingLocal] = useState<boolean | null>(null);
+  const following = followingLocal ?? followingFromDb ?? false;
+  const [followBusy, setFollowBusy] = useState(false);
+  const [followError, setFollowError] = useState<string | null>(null);
+
+  const [contactOpen, setContactOpen] = useState(false);
+  const [text, setText] = useState('');
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+
+  async function toggleFollow() {
+    if (!user) return;
+    setFollowBusy(true);
+    setFollowError(null);
+    try {
+      if (following) await unfollowBookstore(user.id, bookstoreId);
+      else await followBookstore(user.id, bookstoreId);
+      setFollowingLocal(!following);
+      onFollowChange();
+    } catch (e) {
+      setFollowError(e instanceof Error ? e.message : 'Could not update.');
+    } finally {
+      setFollowBusy(false);
+    }
+  }
+
+  async function onSend(e: React.FormEvent) {
+    e.preventDefault();
+    if (!user || !text.trim()) return;
+    setSending(true);
+    setSendError(null);
+    try {
+      await sendMessage(bookstoreId, user.id, text);
+      setText('');
+      setSent(true);
+      setContactOpen(false);
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : 'Could not send your message.');
+    } finally {
+      setSending(false);
+    }
+  }
+
+  const outline =
+    'btn-outline block w-full text-center border border-forest text-forest font-medium py-3 rounded-full';
+
+  if (!user) {
+    return (
+      <div className="bg-white rounded-2xl p-6 shadow-soft space-y-3">
+        <Link to={loginHref} className={outline}>
+          Log in to contact
+        </Link>
+        <Link
+          to={loginHref}
+          className="block w-full text-center font-medium py-3 rounded-full border border-ink/15 text-ink/70 hover:border-forest transition-colors"
+        >
+          Log in to follow
+        </Link>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-white rounded-2xl p-6 shadow-soft space-y-3">
+      {contactOpen ? (
+        <form onSubmit={onSend} className="space-y-3">
+          <p className="text-terracotta text-xs font-semibold tracking-widest uppercase">Contact</p>
+          <p className="text-sm text-ink/60">
+            Message {storeName}. {ownerName ? `${ownerName} usually replies within a day.` : ''}
+          </p>
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder="Your message"
+            aria-label="Your message"
+            rows={4}
+            maxLength={2000}
+            required
+            autoFocus
+            className="w-full bg-white border border-ink/15 rounded-xl px-4 py-3 text-sm outline-none focus:border-terracotta/60"
+          />
+          {sendError && <p className="text-sm text-terracotta">{sendError}</p>}
+          <div className="flex gap-2">
+            <button
+              type="submit"
+              disabled={sending || !text.trim()}
+              className="btn-primary flex-1 bg-forest text-cream text-sm font-medium py-2.5 rounded-full disabled:opacity-60"
+            >
+              {sending ? '…' : 'Send'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setContactOpen(false)}
+              className="text-sm font-medium text-ink/50 hover:text-forest px-4"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      ) : (
+        <>
+          {sent && (
+            <p role="status" className="text-sm text-forest">
+              Message sent to {storeName}.
+            </p>
+          )}
+          <button
+            onClick={() => {
+              setSent(false);
+              setContactOpen(true);
+            }}
+            className={outline}
+          >
+            Contact Bookstore
+          </button>
+        </>
+      )}
+
+      <button
+        onClick={toggleFollow}
+        disabled={followBusy}
+        aria-pressed={following}
+        className={`w-full font-medium py-3 rounded-full border transition-colors disabled:opacity-60 ${
+          following
+            ? 'bg-terracotta/10 border-terracotta text-terracotta'
+            : 'border-ink/15 text-ink/70 hover:border-forest'
+        }`}
+      >
+        {following ? 'Following ✓' : 'Follow Bookstore'}
+      </button>
+      {followError && <p className="text-sm text-terracotta">{followError}</p>}
     </div>
   );
 }

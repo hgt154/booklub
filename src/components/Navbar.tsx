@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, NavLink, useNavigate } from 'react-router-dom';
-import { fetchSuggestions, type Suggestions } from '../lib/api';
+import { fetchSuggestions, logSearch, type Suggestions } from '../lib/api';
 import { useAuth } from '../lib/useAuth';
 
 export function Navbar() {
@@ -9,6 +9,8 @@ export function Navbar() {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Suggestions | null>(null);
   const [open, setOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const isSuperAdmin = profile?.role === 'super_admin';
   const wrapRef = useRef<HTMLDivElement>(null);
 
   // debounce: запит до Supabase через 250 мс після останнього символу
@@ -51,6 +53,7 @@ export function Navbar() {
 
   function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === 'Enter' && query.trim()) {
+      logSearch(query);
       navigate(`/search?q=${encodeURIComponent(query.trim())}`);
       setOpen(false);
       e.currentTarget.blur();
@@ -77,6 +80,9 @@ export function Navbar() {
           <NavLink to="/" end className="nav-link">Home</NavLink>
           <NavLink to="/bookstores" className="nav-link">Bookstores</NavLink>
           <NavLink to="/community" className="nav-link">Community</NavLink>
+          {isSuperAdmin && (
+            <NavLink to="/moderation" className="nav-link">Moderation</NavLink>
+          )}
         </div>
 
         {/* SEARCH */}
@@ -190,8 +196,102 @@ export function Navbar() {
             </>
           )}
         </div>
+
+        {/* MOBILE MENU BUTTON (nav links are hidden below lg) */}
+        <button
+          onClick={() => setMenuOpen((v) => !v)}
+          aria-expanded={menuOpen}
+          aria-controls="mobile-menu"
+          aria-label={menuOpen ? 'Close menu' : 'Open menu'}
+          className="lg:hidden w-10 h-10 shrink-0 rounded-full border border-ink/15 flex items-center justify-center text-forest hover:bg-white transition-colors"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            className="w-5 h-5"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth="2"
+          >
+            {menuOpen ? (
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 6l12 12M18 6L6 18" />
+            ) : (
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 7h16M4 12h16M4 17h16" />
+            )}
+          </svg>
+        </button>
       </div>
+
+      {menuOpen && (
+        <MobileMenu
+          isSuperAdmin={isSuperAdmin}
+          userLabel={user ? profile?.name || user.email || 'Profile' : null}
+          onClose={() => setMenuOpen(false)}
+          onSignOut={async () => {
+            setMenuOpen(false);
+            await signOut();
+            navigate('/');
+          }}
+        />
+      )}
     </nav>
+  );
+}
+
+function MobileMenu({
+  isSuperAdmin, userLabel, onClose, onSignOut,
+}: {
+  isSuperAdmin: boolean;
+  userLabel: string | null;
+  onClose: () => void;
+  onSignOut: () => void;
+}) {
+  const item = 'block px-3 py-2.5 rounded-lg text-sm font-medium text-ink/80 hover:bg-white hover:text-forest';
+  const active = ({ isActive }: { isActive: boolean }) =>
+    `${item} ${isActive ? 'bg-white shadow-soft text-forest' : ''}`;
+
+  return (
+    <div id="mobile-menu" className="lg:hidden border-t border-ink/5 bg-cream">
+      <div className="max-w-7xl mx-auto px-6 py-4 space-y-1">
+        <NavLink to="/" end className={active} onClick={onClose}>Home</NavLink>
+        <NavLink to="/bookstores" className={active} onClick={onClose}>Bookstores</NavLink>
+        <NavLink to="/community" className={active} onClick={onClose}>Community</NavLink>
+        {isSuperAdmin && (
+          <NavLink to="/moderation" className={active} onClick={onClose}>Moderation</NavLink>
+        )}
+        <NavLink to="/apply" className={active} onClick={onClose}>List your bookstore</NavLink>
+
+        <div className="pt-3 mt-3 border-t border-ink/10 space-y-1">
+          {userLabel ? (
+            <>
+              <NavLink to="/profile" className={active} onClick={onClose}>
+                <span className="block truncate">{userLabel}</span>
+              </NavLink>
+              <button onClick={onSignOut} className={`${item} w-full text-left`}>
+                Log out
+              </button>
+            </>
+          ) : (
+            <div className="flex flex-wrap gap-3 pt-1">
+              <Link
+                to="/auth"
+                onClick={onClose}
+                className="btn-outline text-sm font-medium px-5 py-2.5 rounded-full"
+              >
+                Log in
+              </Link>
+              <Link
+                to="/auth?mode=signup"
+                onClick={onClose}
+                className="btn-primary bg-forest text-cream text-sm font-medium px-5 py-2.5 rounded-full"
+              >
+                Join the community
+              </Link>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 

@@ -12,6 +12,7 @@ import AdminPage from './pages/AdminPage'
 import AuthPage from './pages/AuthPage'
 import ProfilePage from './pages/ProfilePage'
 import ApplyPage from './pages/ApplyPage'
+import ModerationPage from './pages/ModerationPage'
 
 export default function App() {
   useEffect(() => {
@@ -33,6 +34,7 @@ export default function App() {
         <Route path="/auth" element={<AuthPage />} />
         <Route path="/profile" element={<ProfilePage />} />
         <Route path="/apply" element={<ApplyPage />} />
+        <Route path="/moderation" element={<ModerationPage />} />
       </Route>
     </Routes>
   )

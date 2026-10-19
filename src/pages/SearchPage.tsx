@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
-import { searchListings } from '../lib/api';
+import { logSearch, searchListings } from '../lib/api';
 import { useAsync } from '../lib/useAsync';
 import { BookCover } from '../components/BookCover';
 import { StoreMark } from '../components/StoreMark';
@@ -10,6 +10,11 @@ export default function SearchPage() {
   const query = params.get('q') ?? '';
 
   const { data: results, loading } = useAsync(() => searchListings(query), [query]);
+
+  // прямі посилання й перезавантаження /search?q=… теж потрапляють у статистику
+  useEffect(() => {
+    logSearch(query);
+  }, [query]);
 
   const [language, setLanguage] = useState<string>('any');
   const [condition, setCondition] = useState<string>('any');

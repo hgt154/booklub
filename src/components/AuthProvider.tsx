@@ -6,6 +6,8 @@ import { AuthContext, type Profile } from '../lib/auth-context';
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
+  // для якого користувача профіль уже завантажено (щоб відрізнити "ще вантажиться" від "немає")
+  const [profileFor, setProfileFor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   // 1) слухаємо сесію: при вході/виході/оновленні сторінки
@@ -30,7 +32,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .eq('id', user.id)
       .single()
       .then(({ data }) => {
-        if (!cancelled) setProfile((data as Profile) ?? null);
+        if (!cancelled) {
+          setProfile((data as Profile) ?? null);
+          setProfileFor(user.id);
+        }
       });
     return () => {
       cancelled = true;
@@ -45,6 +50,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .eq('id', user.id)
       .single();
     setProfile((data as Profile) ?? null);
+    setProfileFor(user.id);
   }
 
   async function signOut() {
@@ -53,7 +59,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, profile: user ? profile : null, loading, signOut, refreshProfile }}>
+    <AuthContext.Provider value={{
+        user,
+        profile: user ? profile : null,
+        loading,
+        profileLoading: !!user && profileFor !== user.id,
+        signOut,
+        refreshProfile,
+      }}>
       {children}
     </AuthContext.Provider>
   );

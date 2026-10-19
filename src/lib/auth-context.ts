@@ -9,6 +9,8 @@ export type AuthState = {
   user: User | null;
   profile: Profile | null;
   loading: boolean;
+  // true, поки профіль (ім'я, роль) поточного користувача ще не завантажено
+  profileLoading: boolean;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
 };
@@ -17,6 +19,7 @@ export const AuthContext = createContext<AuthState>({
   user: null,
   profile: null,
   loading: true,
+  profileLoading: false,
   signOut: async () => {},
   refreshProfile: async () => {},
 });
